@@ -39,16 +39,18 @@
 #include "scene/gui/label.h"
 #include "scene/gui/line_edit.h"
 
-PathValidationResult PathValidationResult::from_error(const String &error) {
+PathValidationResult PathValidationResult::from_error(const String &p_error) {
 	PathValidationResult result;
-	result.error = error;
+	result.error = p_error;
+	result.final_dir = "";
 	result.is_error = true;
 	return result;
 }
 
-PathValidationResult PathValidationResult::from_suceess(const String &final_dir) {
+PathValidationResult PathValidationResult::from_success(const String &p_final_dir) {
 	PathValidationResult result;
-	result.final_dir = final_dir;
+	result.error = "";
+	result.final_dir = p_final_dir;
 	result.is_error = false;
 	return result;
 }
@@ -146,7 +148,7 @@ PathValidationResult DirectoryCreateDialog::_validate_path(const String &p_path)
 		return PathValidationResult::from_error(TTR("Folder with that name already exists."));
 	}
 
-	return PathValidationResult::from_suceess(
+	return PathValidationResult::from_success(
 			final_dir_start + String("/").join(final_dir_array));
 }
 

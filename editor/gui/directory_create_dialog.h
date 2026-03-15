@@ -41,8 +41,8 @@ struct PathValidationResult {
 	String error;
 	String final_dir;
 
-	static PathValidationResult from_error(const String &error);
-	static PathValidationResult from_suceess(const String &final_dir);
+	static PathValidationResult from_error(const String &p_error);
+	static PathValidationResult from_success(const String &p_final_dir);
 };
 
 class DirectoryCreateDialog : public ConfirmationDialog {
