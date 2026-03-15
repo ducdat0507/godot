@@ -39,6 +39,20 @@
 #include "scene/gui/label.h"
 #include "scene/gui/line_edit.h"
 
+PathValidationResult PathValidationResult::from_error(const String &error) {
+	PathValidationResult result;
+	result.error = error;
+	result.is_error = true;
+	return result;
+}
+
+PathValidationResult PathValidationResult::from_suceess(const String &final_dir) {
+	PathValidationResult result;
+	result.final_dir = final_dir;
+	result.is_error = false;
+	return result;
+}
+
 String DirectoryCreateDialog::_sanitize_input(const String &p_path) const {
 	String path = p_path.strip_edges();
 	if (mode == MODE_DIRECTORY) {
@@ -47,71 +61,127 @@ String DirectoryCreateDialog::_sanitize_input(const String &p_path) const {
 	return path;
 }
 
-String DirectoryCreateDialog::_validate_path(const String &p_path) const {
+PathValidationResult DirectoryCreateDialog::_validate_path(const String &p_path) const {
 	if (p_path.is_empty()) {
-		return TTR("Name cannot be empty.");
+		return PathValidationResult::from_error(TTR("Name cannot be empty."));
 	}
 	if (mode == MODE_FILE && p_path.ends_with("/")) {
-		return TTR("File name can't end with /.");
+		return PathValidationResult::from_error(TTR("File name can't end with /."));
 	}
 
-	const PackedStringArray splits = p_path.split("/");
+	String final_dir_start = "";
+	PackedStringArray final_dir_array = {};
+
+	String processed_path = p_path;
+
+	if (base_dir.begins_with("res://")) {
+		final_dir_start = "res://";
+		final_dir_array = base_dir.substr(6).split("/");
+	} else {
+		final_dir_array = base_dir.split("/");
+	}
+
+	if (processed_path.begins_with("res://")) {
+		final_dir_array.clear();
+		processed_path = processed_path.substr(6);
+	} else if (processed_path[0] == '/') {
+		final_dir_array.clear();
+		processed_path = processed_path.substr(1);
+	}
+
+	const PackedStringArray splits = processed_path.split("/");
 	for (int i = 0; i < splits.size(); i++) {
 		const String &part = splits[i];
 		bool is_file = mode == MODE_FILE && i == splits.size() - 1;
 
 		if (part.is_empty()) {
 			if (is_file) {
-				return TTR("File name cannot be empty.");
+				return PathValidationResult::from_error(TTR("File name cannot be empty."));
 			} else {
-				return TTR("Folder name cannot be empty.");
+				return PathValidationResult::from_error(TTR("Folder name cannot be empty."));
+			}
+		}
+		if (part == ".") {
+			if (is_file) {
+				return PathValidationResult::from_error(TTR("File name contains invalid characters."));
+			} else {
+				continue;
+			}
+		}
+		if (part == "..") {
+			if (is_file) {
+				return PathValidationResult::from_error(TTR("File name contains invalid characters."));
+			} else if (final_dir_array.size() <= 0) {
+				return PathValidationResult::from_error(TTR("Path points to a location that is invalid."));
+			} else {
+				final_dir_array.remove_at(final_dir_array.size() - 1);
+				continue;
 			}
 		}
 		if (part.contains_char('\\') || part.contains_char(':') || part.contains_char('*') ||
 				part.contains_char('|') || part.contains_char('>') || part.ends_with(".") || part.ends_with(" ")) {
 			if (is_file) {
-				return TTR("File name contains invalid characters.");
+				return PathValidationResult::from_error(TTR("File name contains invalid characters."));
 			} else {
-				return TTR("Folder name contains invalid characters.");
+				return PathValidationResult::from_error(TTR("Folder name contains invalid characters."));
 			}
 		}
 		if (part[0] == '.') {
 			if (is_file) {
-				return TTR("File name begins with a dot.");
+				return PathValidationResult::from_error(TTR("File name may not begin with a dot."));
 			} else {
-				return TTR("Folder name begins with a dot.");
+				return PathValidationResult::from_error(TTR("Folder name may not begin with a dot."));
 			}
 		}
+
+		final_dir_array.append(part);
 	}
 
 	Ref<DirAccess> da = DirAccess::create(DirAccess::ACCESS_RESOURCES);
 	da->change_dir(base_dir);
 	if (da->file_exists(p_path)) {
-		return TTR("File with that name already exists.");
+		return PathValidationResult::from_error(TTR("File with that name already exists."));
 	}
 	if (da->dir_exists(p_path)) {
-		return TTR("Folder with that name already exists.");
+		return PathValidationResult::from_error(TTR("Folder with that name already exists."));
 	}
 
-	return String();
+	return PathValidationResult::from_suceess(
+			final_dir_start + String("/").join(final_dir_array));
 }
 
 void DirectoryCreateDialog::_on_dir_path_changed() {
 	const String path = _sanitize_input(dir_path->get_text());
-	const String error = _validate_path(path);
+	const PathValidationResult validation_result = _validate_path(path);
 
-	if (error.is_empty()) {
+	if (validation_result.is_error) {
+		validation_panel->set_message(MSG_ID_VALIDATION, validation_result.error, EditorValidationPanel::MSG_ERROR);
+		validation_panel->set_message(MSG_ID_SUBFOLDER, "", EditorValidationPanel::MSG_OK);
+	} else {
 		if (path.contains_char('/')) {
 			if (mode == MODE_DIRECTORY) {
-				validation_panel->set_message(EditorValidationPanel::MSG_ID_DEFAULT, TTRC("Using slashes in folder names will create subfolders recursively."), EditorValidationPanel::MSG_OK);
+				validation_panel->set_message(MSG_ID_VALIDATION,
+						vformat(TTR("Folder will be created at: %s"), validation_result.final_dir),
+						EditorValidationPanel::MSG_OK);
 			} else {
-				validation_panel->set_message(EditorValidationPanel::MSG_ID_DEFAULT, TTRC("Using slashes in path will create the file in subfolder, creating new subfolders if necessary."), EditorValidationPanel::MSG_OK);
+				validation_panel->set_message(MSG_ID_VALIDATION,
+						vformat(TTR("File will be created at: %s"), validation_result.final_dir),
+						EditorValidationPanel::MSG_OK);
 			}
+
+			const bool parent_dir_exists = DirAccess::dir_exists_absolute(validation_result.final_dir.path_join(".."));
+			if (parent_dir_exists) {
+				validation_panel->set_message(MSG_ID_SUBFOLDER, "", EditorValidationPanel::MSG_OK);
+			} else {
+				validation_panel->set_message(MSG_ID_SUBFOLDER,
+						TTR("One or more subfolders along the destination path do not exist yet and will be created."),
+						EditorValidationPanel::MSG_WARNING);
+			}
+
 		} else if (mode == MODE_FILE) {
-			validation_panel->set_message(EditorValidationPanel::MSG_ID_DEFAULT, TTRC("File name is valid."), EditorValidationPanel::MSG_OK);
+			validation_panel->set_message(MSG_ID_VALIDATION, TTRC("File name is valid."), EditorValidationPanel::MSG_OK);
+			validation_panel->set_message(MSG_ID_SUBFOLDER, "", EditorValidationPanel::MSG_OK);
 		}
-	} else {
-		validation_panel->set_message(EditorValidationPanel::MSG_ID_DEFAULT, error, EditorValidationPanel::MSG_ERROR);
 	}
 }
 
@@ -119,10 +189,10 @@ void DirectoryCreateDialog::ok_pressed() {
 	const String path = _sanitize_input(dir_path->get_text());
 
 	// The OK button should be disabled if the path is invalid, but just in case.
-	const String error = _validate_path(path);
-	ERR_FAIL_COND_MSG(!error.is_empty(), error);
+	const PathValidationResult validation_result = _validate_path(path);
+	ERR_FAIL_COND_MSG(validation_result.is_error, validation_result.error);
 
-	accept_callback.call(base_dir.path_join(path));
+	accept_callback.call(validation_result.final_dir);
 	hide();
 }
 
@@ -178,7 +248,8 @@ DirectoryCreateDialog::DirectoryCreateDialog() {
 
 	validation_panel = memnew(EditorValidationPanel);
 	vb->add_child(validation_panel);
-	validation_panel->add_line(EditorValidationPanel::MSG_ID_DEFAULT, TTRC("Folder name is valid."));
+	validation_panel->add_line(MSG_ID_VALIDATION, TTRC("Folder name is valid."));
+	validation_panel->add_line(MSG_ID_SUBFOLDER);
 	validation_panel->set_update_callback(callable_mp(this, &DirectoryCreateDialog::_on_dir_path_changed));
 	validation_panel->set_accept_button(get_ok_button());
 

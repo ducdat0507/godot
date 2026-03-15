@@ -36,8 +36,22 @@ class EditorValidationPanel;
 class Label;
 class LineEdit;
 
+struct PathValidationResult {
+	bool is_error;
+	String error;
+	String final_dir;
+
+	static PathValidationResult from_error(const String &error);
+	static PathValidationResult from_suceess(const String &final_dir);
+};
+
 class DirectoryCreateDialog : public ConfirmationDialog {
 	GDCLASS(DirectoryCreateDialog, ConfirmationDialog);
+
+	enum {
+		MSG_ID_VALIDATION,
+		MSG_ID_SUBFOLDER,
+	};
 
 public:
 	enum Mode {
@@ -55,7 +69,7 @@ private:
 	EditorValidationPanel *validation_panel = nullptr;
 
 	String _sanitize_input(const String &p_input) const;
-	String _validate_path(const String &p_path) const;
+	PathValidationResult _validate_path(const String &p_path) const;
 	void _on_dir_path_changed();
 
 protected:
